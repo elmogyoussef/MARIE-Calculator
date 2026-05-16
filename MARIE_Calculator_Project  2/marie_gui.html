@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MARIE CPU Simulator</title>
+<style>
+/* ── Reset & root ─────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #040c04;
+  --panel:   #071207;
+  --border:  #0f3316;
+  --green:   #00ff41;
+  --dim:     #008829;
+  --dimmer:  #003d12;
+  --amber:   #ffaa00;
+  --cyan:    #00ccff;
+  --red:     #ff4444;
+  --purple:  #cc44ff;
+  --glow:    0 0 8px #00ff41, 0 0 20px #00ff41;
+  --glow-sm: 0 0 6px #00ff41;
+}
+
+body {
+  background: var(--bg);
+  color: var(--green);
+  font-family: "Courier New", "Consolas", monospace;
+  min-height: 100vh;
+  padding: 16px;
+  user-select: none;
+}
+
+/* CRT scanlines */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0px,
+    transparent 3px,
+    rgba(0,0,0,.08) 3px,
+    rgba(0,0,0,.08) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ── Typography helpers ───────────────────────────────────────────────────── */
+.spaced { letter-spacing: .35em; }
+.dim    { color: var(--dim); }
+.dimmer { color: var(--dimmer); }
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+#header {
+  border: 1px solid var(--border);
+  padding: 20px 24px 18px;
+  text-align: center;
+  margin-bottom: 14px;
+  background: rgba(0,255,65,.02);
+  position: relative;
+}
+#header::before, #header::after {
+  content: "";
+  position: absolute;
+  width: 10px; height: 10px;
+  border-color: var(--green);
+  border-style: solid;
+}
+#header::before { top: -1px; left: -1px;  border-width: 2px 0 0 2px; }
+#header::after  { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
+
+#header h1 {
+  font-size: clamp(1.4rem, 3vw, 2.2rem);
+  letter-spacing: .45em;
+  text-transform: uppercase;
+  color: var(--green);
+  text-shadow: var(--glow);
+  margin-bottom: 6px;
+}
+#header h1 .diamond { color: var(--dim); font-size: .85em; }
+#header p {
+  letter-spacing: .25em;
+  color: var(--dim);
+  font-size: .72rem;
+  text-transform: uppercase;
+}
+
+/* ── AC Hero ──────────────────────────────────────────────────────────────── */
+#ac-hero {
+  border: 1px solid var(--border);
+  padding: 18px 24px;
+  text-align: center;
+  margin-bottom: 14px;
+  background: rgba(0,255,65,.015);
+}
+#ac-hero .label {
+  letter-spacing: .4em;
+  color: var(--dim);
+  font-size: .75rem;
+  margin-bottom: 14px;
+  text-transform: uppercase;
+}
+#ac-display {
+  width: 120px;
+  height: 120px;
+  border: 1px solid var(--dim);
+  border-radius: 50%;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 3.2rem;
+  font-weight: bold;
+  color: var(--green);
+  text-shadow: var(--glow);
+  background: radial-gradient(ellipse at center, rgba(0,255,65,.08) 0%, transparent 70%);
+  box-shadow: 0 0 24px rgba(0,255,65,.15), inset 0 0 24px rgba(0,255,65,.05);
+  transition: all .3s ease;
+}
+#ac-display.flash {
+  background: radial-gradient(ellipse at center, rgba(0,255,65,.3) 0%, transparent 70%);
+  box-shadow: 0 0 40px rgba(0,255,65,.5), inset 0 0 30px rgba(0,255,65,.15);
+}
+
+/* ── Two-column grid ──────────────────────────────────────────────────────── */
+#main-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+/* ── Panel base ──────────────────────────────────────────────────────────── */
+.panel {
+  border: 1px solid var(--border);
+  padding: 18px 20px;
+  background: rgba(0,255,65,.015);
+  position: relative;
+}
+.panel-title {
+  letter-spacing: .3em;
+  color: var(--dim);
+  font-size: .78rem;
+  text-transform: uppercase;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.panel-title::before { content: "▶"; color: var(--dimmer); font-size: .7rem; }
+
+/* ── Register rows ───────────────────────────────────────────────────────── */
+.reg-row {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  gap: 14px;
+  transition: border-color .3s, background .3s;
+}
+.reg-row.flash {
+  border-color: var(--green);
+  background: rgba(0,255,65,.07);
+}
+.reg-name {
+  width: 38px;
+  font-size: .85rem;
+  color: var(--dim);
+  letter-spacing: .1em;
+}
+.reg-bar {
+  flex: 1;
+  height: 2px;
+  background: var(--dimmer);
+  position: relative;
+  overflow: hidden;
+}
+.reg-bar-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 0%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+  transition: width .4s ease, background .3s;
+}
+.reg-val {
+  font-size: 1.3rem;
+  font-weight: bold;
+  width: 64px;
+  text-align: right;
+  transition: color .3s, text-shadow .3s;
+}
+.reg-val.ac  { color: var(--green); text-shadow: var(--glow-sm); }
+.reg-val.mar { color: var(--amber); text-shadow: 0 0 8px var(--amber); }
+.reg-val.mbr { color: var(--cyan);  text-shadow: 0 0 8px var(--cyan); }
+
+/* ── Memory map ──────────────────────────────────────────────────────────── */
+#mem-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 5px;
+}
+.mem-cell {
+  border: 1px solid var(--border);
+  padding: 5px 3px;
+  text-align: center;
+  background: rgba(0,255,65,.015);
+  transition: border-color .3s, background .3s;
+}
+.mem-cell.flash {
+  border-color: var(--green);
+  background: rgba(0,255,65,.12);
+}
+.mem-cell .m-addr {
+  font-size: .6rem;
+  color: var(--dimmer);
+  display: block;
+}
+.mem-cell .m-val {
+  font-size: .85rem;
+  color: var(--green);
+  display: block;
+  font-weight: bold;
+  transition: color .3s;
+}
+.mem-cell.operand { border-color: #1a5a2a; }
+.mem-cell.operand .m-addr { color: var(--dim); }
+.mem-cell.temp    { border-color: #5a3a00; }
+.mem-cell.temp    .m-addr { color: #886600; }
+
+/* ── Trace ───────────────────────────────────────────────────────────────── */
+#trace-panel {
+  border: 1px solid var(--border);
+  padding: 18px 20px;
+  margin-bottom: 14px;
+  background: rgba(0,255,65,.012);
+}
+#trace {
+  height: 220px;
+  overflow-y: auto;
+  font-size: .82rem;
+  line-height: 1.65;
+  padding-right: 4px;
+}
+#trace::-webkit-scrollbar { width: 6px; }
+#trace::-webkit-scrollbar-track { background: var(--panel); }
+#trace::-webkit-scrollbar-thumb { background: var(--border); }
+
+.t-op     { color: var(--green); font-weight: bold; }
+.t-inst   { color: var(--cyan); }
+.t-reg    { color: var(--dim); }
+.t-result { color: #00ff41; font-weight: bold; }
+.t-mem    { color: var(--amber); }
+.t-muted  { color: var(--dimmer); }
+.t-sep    { color: var(--border); }
+.t-final  { color: var(--purple); font-weight: bold; }
+.t-error  { color: var(--red); font-weight: bold; }
+
+/* ── Operations ──────────────────────────────────────────────────────────── */
+#ops-panel {
+  border: 1px solid var(--border);
+  padding: 18px 20px;
+  background: rgba(0,255,65,.012);
+}
+#ops-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.op-btn {
+  border: 1px solid var(--green);
+  background: transparent;
+  color: var(--green);
+  font-family: "Courier New", monospace;
+  font-size: .8rem;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  padding: 9px 18px;
+  cursor: pointer;
+  transition: all .2s;
+  position: relative;
+}
+.op-btn:hover:not(:disabled) {
+  background: var(--green);
+  color: var(--bg);
+  box-shadow: 0 0 14px var(--green);
+}
+.op-btn:disabled { opacity: .28; cursor: not-allowed; }
+.op-btn.reset-btn { border-color: var(--dim); color: var(--dim); }
+.op-btn.reset-btn:hover:not(:disabled) { background: var(--dim); color: var(--bg); box-shadow: none; }
+.op-btn.halt-btn  { border-color: var(--red); color: var(--red); }
+.op-btn.halt-btn:hover:not(:disabled)  { background: var(--red); color: var(--bg); box-shadow: 0 0 14px var(--red); }
+
+/* Halted overlay on AC display */
+#halted-badge {
+  display: none;
+  letter-spacing: .3em;
+  font-size: .72rem;
+  color: var(--red);
+  text-shadow: 0 0 8px var(--red);
+  margin-top: 10px;
+  animation: blink 1.2s step-start infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ── Status bar ──────────────────────────────────────────────────────────── */
+#status-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+  font-size: .75rem;
+  color: var(--dimmer);
+  letter-spacing: .1em;
+}
+#status-msg { transition: color .3s; }
+#ac-badge   { color: var(--green); text-shadow: var(--glow-sm); font-size: .9rem; }
+
+/* ── Modal ───────────────────────────────────────────────────────────────── */
+#modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(4,12,4,.88);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+}
+#modal-overlay.show { display: flex; }
+#modal {
+  border: 1px solid var(--green);
+  background: var(--panel);
+  padding: 28px 32px;
+  min-width: 360px;
+  box-shadow: 0 0 30px rgba(0,255,65,.2);
+}
+#modal-title {
+  color: var(--dim);
+  letter-spacing: .25em;
+  font-size: .82rem;
+  margin-bottom: 14px;
+  text-transform: uppercase;
+}
+#modal-hint {
+  color: var(--dimmer);
+  font-size: .72rem;
+  margin-bottom: 10px;
+}
+#modal-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--green);
+  font-family: "Courier New", monospace;
+  font-size: 1rem;
+  padding: 8px 12px;
+  outline: none;
+  caret-color: var(--green);
+  transition: border-color .2s;
+}
+#modal-input:focus { border-color: var(--green); box-shadow: 0 0 8px rgba(0,255,65,.2); }
+#modal-input.error { border-color: var(--red); animation: shake .3s; }
+@keyframes shake {
+  0%,100% { transform: translateX(0); }
+  25%      { transform: translateX(-6px); }
+  75%      { transform: translateX(6px); }
+}
+#modal-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+.modal-btn {
+  border: 1px solid;
+  background: transparent;
+  font-family: "Courier New", monospace;
+  font-size: .8rem;
+  letter-spacing: .15em;
+  padding: 8px 20px;
+  cursor: pointer;
+  transition: all .2s;
+  text-transform: uppercase;
+}
+.modal-btn.ok     { border-color: var(--green); color: var(--green); }
+.modal-btn.ok:hover { background: var(--green); color: var(--bg); box-shadow: 0 0 12px var(--green); }
+.modal-btn.cancel { border-color: var(--dimmer); color: var(--dimmer); }
+.modal-btn.cancel:hover { border-color: var(--dim); color: var(--dim); }
+</style>
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────────────────── -->
+<div id="header">
+  <h1>
+    <span class="diamond">◈</span>
+    &nbsp;M A R I E &nbsp; C P U &nbsp; S I M U L A T O R&nbsp;
+    <span class="diamond">◈</span>
+  </h1>
+  <p>Machine Architecture That Is Really Intuitive And Easy &nbsp;·&nbsp; Register Transfer Level</p>
+</div>
+
+<!-- ── AC Hero ────────────────────────────────────────────────────────────── -->
+<div id="ac-hero">
+  <div class="label spaced">Accumulator</div>
+  <div id="ac-display">0</div>
+  <div id="halted-badge">■ &nbsp; P R O C E S S O R &nbsp; H A L T E D</div>
+</div>
+
+<!-- ── Main grid: registers + memory ─────────────────────────────────────── -->
+<div id="main-grid">
+  <!-- Registers -->
+  <div class="panel">
+    <div class="panel-title spaced">CPU Registers</div>
+
+    <div class="reg-row" id="row-AC">
+      <span class="reg-name spaced">AC</span>
+      <div class="reg-bar"><div class="reg-bar-fill" id="bar-AC"></div></div>
+      <span class="reg-val ac" id="val-AC">0</span>
+    </div>
+    <div class="reg-row" id="row-MAR">
+      <span class="reg-name spaced">MAR</span>
+      <div class="reg-bar"><div class="reg-bar-fill" id="bar-MAR" style="background:var(--amber);box-shadow:0 0 8px var(--amber)"></div></div>
+      <span class="reg-val mar" id="val-MAR">0</span>
+    </div>
+    <div class="reg-row" id="row-MBR">
+      <span class="reg-name spaced">MBR</span>
+      <div class="reg-bar"><div class="reg-bar-fill" id="bar-MBR" style="background:var(--cyan);box-shadow:0 0 8px var(--cyan)"></div></div>
+      <span class="reg-val mbr" id="val-MBR">0</span>
+    </div>
+  </div>
+
+  <!-- Memory map -->
+  <div class="panel">
+    <div class="panel-title spaced">Memory Map</div>
+    <div id="mem-grid"></div>
+  </div>
+</div>
+
+<!-- ── Execution trace ────────────────────────────────────────────────────── -->
+<div id="trace-panel" class="panel">
+  <div class="panel-title spaced">Execution Trace</div>
+  <div id="trace"></div>
+</div>
+
+<!-- ── Operations ────────────────────────────────────────────────────────── -->
+<div id="ops-panel" class="panel">
+  <div class="panel-title spaced">Operations</div>
+  <div id="ops-row">
+    <button class="op-btn" id="btn-ADD"     onclick="opAdd()">ADD</button>
+    <button class="op-btn" id="btn-SUBT"    onclick="opSubt()">SUBT</button>
+    <button class="op-btn" id="btn-CLEAR"   onclick="opClear()">CLEAR</button>
+    <button class="op-btn" id="btn-SUM"     onclick="opSum()">SUM</button>
+    <button class="op-btn" id="btn-AVERAGE" onclick="opAverage()">AVERAGE</button>
+    <button class="op-btn" id="btn-MAX"     onclick="opMax()">MAX</button>
+    <button class="op-btn" id="btn-SORT"    onclick="opSort()">SORT</button>
+    <button class="op-btn halt-btn" id="btn-HALT" onclick="opHalt()">HALT</button>
+    <button class="op-btn reset-btn" id="btn-RESET" onclick="opReset()">RESET</button>
+  </div>
+  <div id="status-bar">
+    <span id="status-msg">Ready.</span>
+    <span id="ac-badge">AC = 0</span>
+  </div>
+</div>
+
+<!-- ── Modal dialog ───────────────────────────────────────────────────────── -->
+<div id="modal-overlay">
+  <div id="modal">
+    <div id="modal-title"></div>
+    <div id="modal-hint"></div>
+    <input id="modal-input" type="text" autocomplete="off" spellcheck="false">
+    <div id="modal-btns">
+      <button class="modal-btn cancel" onclick="modalCancel()">Cancel</button>
+      <button class="modal-btn ok"     onclick="modalOk()">OK</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// ── MARIE machine state ───────────────────────────────────────────────────────
+let _halted = false;
+let AC = 0, MAR = 0, MBR = 0;
+const MEM = new Array(16).fill(0);
+const MEM_OPERAND = 5, MEM_TEMP = 6;
+
+// Event log: collected during operation, replayed with animation
+let _events = [];
+
+function _q(type, ...args) { _events.push({ type, args }); }
+
+// ── MARIE primitives ──────────────────────────────────────────────────────────
+
+function execInput(value) {
+  _q("t", "inst", "  [EXECUTE  INPUT]");
+  AC = value;
+  _q("t", "reg",  `    AC  ← input        AC  = ${AC}`);
+  _q("r", "AC", AC);
+}
+
+function execStore(addr) {
+  _q("t", "inst", `  [EXECUTE  STORE ${addr}]`);
+  MAR = addr;
+  _q("t", "reg",  `    MAR ← ${String(addr).padEnd(12)}    MAR = ${MAR}`);
+  _q("r", "MAR", MAR);
+  MBR = AC;
+  _q("t", "reg",  `    MBR ← AC           MBR = ${MBR}`);
+  _q("r", "MBR", MBR);
+  MEM[MAR] = MBR;
+  _q("t", "mem",  `    M[MAR] ← MBR       M[${MAR}] = ${MEM[MAR]}`);
+  _q("m", MAR, MBR);
+}
+
+function execLoad(addr) {
+  _q("t", "inst", `  [EXECUTE  LOAD ${addr}]`);
+  MAR = addr;
+  _q("t", "reg",  `    MAR ← ${String(addr).padEnd(12)}    MAR = ${MAR}`);
+  _q("r", "MAR", MAR);
+  MBR = MEM[MAR];
+  _q("t", "reg",  `    MBR ← M[MAR]       MBR = ${MBR}`);
+  _q("r", "MBR", MBR);
+  AC = MBR;
+  _q("t", "reg",  `    AC  ← MBR          AC  = ${AC}`);
+  _q("r", "AC", AC);
+}
+
+function execAdd(addr) {
+  _q("t", "inst", `  [EXECUTE  ADD ${addr}]`);
+  MAR = addr;
+  _q("t", "reg",  `    MAR ← ${String(addr).padEnd(12)}    MAR = ${MAR}`);
+  _q("r", "MAR", MAR);
+  MBR = MEM[MAR];
+  _q("t", "reg",  `    MBR ← M[MAR]       MBR = ${MBR}`);
+  _q("r", "MBR", MBR);
+  const old = AC;
+  AC = AC + MBR;
+  _q("t", "result", `    AC  ← AC + MBR     ${old} + ${MBR} = ${AC}`);
+  _q("r", "AC", AC);
+}
+
+function execSubt(addr) {
+  _q("t", "inst", `  [EXECUTE  SUBT ${addr}]`);
+  MAR = addr;
+  _q("t", "reg",  `    MAR ← ${String(addr).padEnd(12)}    MAR = ${MAR}`);
+  _q("r", "MAR", MAR);
+  MBR = MEM[MAR];
+  _q("t", "reg",  `    MBR ← M[MAR]       MBR = ${MBR}`);
+  _q("r", "MBR", MBR);
+  const old = AC;
+  AC = AC - MBR;
+  _q("t", "result", `    AC  ← AC − MBR     ${old} − ${MBR} = ${AC}`);
+  _q("r", "AC", AC);
+}
+
+function execClear() {
+  _q("t", "inst", "  [EXECUTE  CLEAR]");
+  AC = 0;
+  _q("t", "reg",  `    AC  ← 0            AC  = ${AC}`);
+  _q("r", "AC", AC);
+}
+
+// ── High-level operations ─────────────────────────────────────────────────────
+
+function doAdd(x) {
+  _q("t", "op", `  ▶ ADD ${x}`);
+  execStore(MEM_TEMP); execInput(x); execStore(MEM_OPERAND);
+  execLoad(MEM_TEMP); execAdd(MEM_OPERAND);
+}
+
+function doSubt(x) {
+  _q("t", "op", `  ▶ SUBT ${x}`);
+  execStore(MEM_TEMP); execInput(x); execStore(MEM_OPERAND);
+  execLoad(MEM_TEMP); execSubt(MEM_OPERAND);
+}
+
+function doClear() {
+  _q("t", "op", "  ▶ CLEAR");
+  execClear();
+}
+
+function marieSetAC(value) { doClear(); doAdd(value); }
+
+function marieSum(data) {
+  doClear();
+  data.forEach(v => doAdd(v));
+  return AC;
+}
+
+function marieAverage(data) {
+  if (!data.length) { doClear(); return AC; }
+  marieSum(data);
+  const avg = Math.trunc(AC / data.length);
+  _q("t", "op", `  ▶ Integer division: ${AC} ÷ ${data.length} = ${avg}`);
+  marieSetAC(avg);
+  return AC;
+}
+
+function marieMax(data) {
+  if (!data.length) { doClear(); return AC; }
+  marieSetAC(data[0]);
+  let maxVal = data[0];
+  for (let i = 1; i < data.length; i++) {
+    execStore(MEM_TEMP); execInput(data[i]); execStore(MEM_OPERAND);
+    execLoad(MEM_TEMP); execSubt(MEM_OPERAND);
+    if (AC < 0) maxVal = data[i];
+    marieSetAC(maxVal);
+  }
+  return AC;
+}
+
+function marieSort(data) {
+  const n = data.length;
+  if (n <= 1) { n === 1 ? marieSetAC(data[0]) : doClear(); return; }
+  for (let i = 0; i < n - 1; i++) {
+    for (let j = 0; j < n - 1 - i; j++) {
+      marieSetAC(data[j]); execStore(MEM_TEMP);
+      execInput(data[j+1]); execStore(MEM_OPERAND);
+      execLoad(MEM_TEMP); execSubt(MEM_OPERAND);
+      if (AC > 0) {
+        [data[j], data[j+1]] = [data[j+1], data[j]];
+        _q("t", "op", `    ↕ Swapped → [${data}]`);
+      }
+    }
+  }
+  marieSetAC(data[0]);
+}
+
+// ── UI: build memory grid ─────────────────────────────────────────────────────
+
+function buildMemGrid() {
+  const g = document.getElementById("mem-grid");
+  g.innerHTML = "";
+  for (let i = 0; i < 16; i++) {
+    const cell = document.createElement("div");
+    cell.className = "mem-cell" +
+      (i === MEM_OPERAND ? " operand" : i === MEM_TEMP ? " temp" : "");
+    cell.id = `mem-${i}`;
+
+    const addrLabel = i === MEM_OPERAND ? `[${i}]·OP` :
+                      i === MEM_TEMP    ? `[${i}]·TMP` : `[${i}]`;
+
+    cell.innerHTML = `<span class="m-addr">${addrLabel}</span><span class="m-val" id="mval-${i}">0</span>`;
+    g.appendChild(cell);
+  }
+}
+
+// ── UI: event replay with animation ──────────────────────────────────────────
+
+const STEP_MS = 18;   // ms between trace lines
+
+async function replayEvents(events) {
+  for (const ev of events) {
+    if (ev.type === "t") {
+      addLine(ev.args[0], ev.args[1]);
+    } else if (ev.type === "r") {
+      flashReg(ev.args[0], ev.args[1]);
+    } else if (ev.type === "m") {
+      flashMem(ev.args[0], ev.args[1]);
+    }
+    await sleep(STEP_MS);
+  }
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function addLine(cls, text) {
+  const trace = document.getElementById("trace");
+  const div = document.createElement("div");
+  div.className = `t-${cls}`;
+  div.textContent = text;
+  trace.appendChild(div);
+  trace.scrollTop = trace.scrollHeight;
+}
+
+function addSep() {
+  addLine("sep", "  " + "─".repeat(64));
+}
+
+let _flashTimers = {};
+
+function flashReg(name, value) {
+  // Update value labels
+  document.getElementById(`val-${name}`).textContent = value;
+
+  // Update AC hero
+  if (name === "AC") {
+    document.getElementById("ac-display").textContent = value;
+    document.getElementById("ac-badge").textContent = `AC = ${value}`;
+  }
+
+  // Update bar fill (0–100% clamped, absolute value based)
+  const maxAbsVal = 9999;
+  const pct = Math.min(Math.abs(value) / maxAbsVal * 100, 100);
+  const bar = document.getElementById(`bar-${name}`);
+  if (bar) bar.style.width = pct + "%";
+
+  // Flash border
+  const row = document.getElementById(`row-${name}`);
+  const acd = document.getElementById("ac-display");
+  if (row) row.classList.add("flash");
+  if (name === "AC") acd.classList.add("flash");
+
+  clearTimeout(_flashTimers[name]);
+  _flashTimers[name] = setTimeout(() => {
+    if (row) row.classList.remove("flash");
+    if (name === "AC") acd.classList.remove("flash");
+  }, 420);
+}
+
+function flashMem(addr, value) {
+  const vEl = document.getElementById(`mval-${addr}`);
+  const cell = document.getElementById(`mem-${addr}`);
+  if (vEl) vEl.textContent = value;
+  if (cell) {
+    cell.classList.add("flash");
+    setTimeout(() => cell.classList.remove("flash"), 500);
+  }
+}
+
+// ── UI: busy / halted state ───────────────────────────────────────────────────
+
+// Buttons that belong to the processor (disabled on HALT)
+const PROC_BTN_IDS = ["btn-ADD","btn-SUBT","btn-CLEAR","btn-SUM","btn-AVERAGE","btn-MAX","btn-SORT","btn-HALT"];
+
+function setBusy(busy) {
+  document.querySelectorAll(".op-btn").forEach(b => b.disabled = busy);
+  setStatus(busy ? "Running…" : "Ready.", busy ? "var(--green)" : "var(--dimmer)");
+}
+
+function setHalted(halted) {
+  _halted = halted;
+  PROC_BTN_IDS.forEach(id => {
+    const b = document.getElementById(id);
+    if (b) b.disabled = halted;
+  });
+  document.getElementById("halted-badge").style.display = halted ? "block" : "none";
+  if (halted) {
+    document.getElementById("ac-display").style.borderColor = "var(--red)";
+    document.getElementById("ac-display").style.boxShadow =
+      "0 0 24px rgba(255,68,68,.3), inset 0 0 24px rgba(255,68,68,.08)";
+    setStatus("■  PROCESSOR HALTED  —  press RESET to restart", "var(--red)");
+  } else {
+    document.getElementById("ac-display").style.borderColor = "";
+    document.getElementById("ac-display").style.boxShadow = "";
+  }
+}
+
+function setStatus(msg, color) {
+  const el = document.getElementById("status-msg");
+  el.textContent = msg;
+  el.style.color = color || "var(--dimmer)";
+}
+
+// ── Operation runners ─────────────────────────────────────────────────────────
+
+async function runOp(fn, label) {
+  if (_halted) { setStatus("Processor HALTED — press RESET to restart.", "var(--red)"); return; }
+  setBusy(true);
+  addSep();
+  _events = [];
+  fn();
+  const snap = [..._events];
+  await replayEvents(snap);
+  addLine("final", `\n  ✓  ${label}`);
+  addSep();
+  setStatus(`Done — ${label}`, "var(--purple)");
+  setBusy(false);
+}
+
+async function opAdd() {
+  const x = await askInt("Enter integer to ADD to AC:");
+  if (x === null) return;
+  await runOp(() => doAdd(x), `ADD ${x}  →  AC = ${AC}`);
+}
+
+async function opSubt() {
+  const x = await askInt("Enter integer to SUBTRACT from AC:");
+  if (x === null) return;
+  await runOp(() => doSubt(x), `SUBT ${x}  →  AC = ${AC}`);
+}
+
+async function opClear() {
+  await runOp(() => doClear(), `CLEAR  →  AC = 0`);
+}
+
+async function opSum() {
+  const data = await askArray();
+  if (!data) return;
+  await runOp(() => marieSum(data), `SUM[${data}]  =  ${AC}`);
+}
+
+async function opAverage() {
+  const data = await askArray();
+  if (!data) return;
+  await runOp(() => marieAverage(data), `AVERAGE[${data}]  =  ${AC}`);
+}
+
+async function opMax() {
+  const data = await askArray();
+  if (!data) return;
+  await runOp(() => marieMax(data), `MAX[${data}]  =  ${AC}`);
+}
+
+async function opSort() {
+  const data = await askArray();
+  if (!data) return;
+  const arr = [...data];
+  await runOp(() => marieSort(arr), `SORT  →  [${arr}]`);
+}
+
+async function opHalt() {
+  if (_halted) return;
+  addSep();
+  _events = [];
+  _q("t", "inst",  "  [EXECUTE  HALT]");
+  _q("t", "muted", "    Processor HALTED.");
+  await replayEvents([..._events]);
+  addLine("final", "\n  ■  PROCESSOR HALTED");
+  addSep();
+  setHalted(true);
+}
+
+function opReset() {
+  setHalted(false);
+  AC = MAR = MBR = 0;
+  MEM.fill(0);
+  document.getElementById("trace").innerHTML = "";
+  addLine("op", "  System RESET — all registers and memory zeroed");
+  addSep();
+  ["AC","MAR","MBR"].forEach(n => {
+    document.getElementById(`val-${n}`).textContent = "0";
+    const bar = document.getElementById(`bar-${n}`);
+    if (bar) bar.style.width = "0%";
+    const row = document.getElementById(`row-${n}`);
+    if (row) row.classList.remove("flash");
+  });
+  document.getElementById("ac-display").textContent = "0";
+  document.getElementById("ac-badge").textContent = "AC = 0";
+  for (let i = 0; i < 16; i++) {
+    const v = document.getElementById(`mval-${i}`);
+    if (v) v.textContent = "0";
+    const c = document.getElementById(`mem-${i}`);
+    if (c) c.classList.remove("flash");
+  }
+  setStatus("Reset complete.", "var(--dim)");
+}
+
+// ── Modal input ───────────────────────────────────────────────────────────────
+
+let _modalResolve = null;
+
+function showModal(title, hint) {
+  document.getElementById("modal-title").textContent = title;
+  document.getElementById("modal-hint").textContent  = hint;
+  const inp = document.getElementById("modal-input");
+  inp.value = "";
+  inp.className = "";
+  document.getElementById("modal-overlay").classList.add("show");
+  setTimeout(() => inp.focus(), 60);
+}
+
+function hideModal() {
+  document.getElementById("modal-overlay").classList.remove("show");
+}
+
+function modalOk() {
+  if (_modalResolve) _modalResolve("ok");
+}
+
+function modalCancel() {
+  if (_modalResolve) _modalResolve("cancel");
+}
+
+function askInt(prompt) {
+  return new Promise(resolve => {
+    showModal(prompt, "Enter a single integer (e.g. 42 or -7)");
+    _modalResolve = (action) => {
+      if (action === "cancel") { hideModal(); _modalResolve = null; resolve(null); return; }
+      const raw = document.getElementById("modal-input").value.trim();
+      const n = parseInt(raw, 10);
+      if (isNaN(n) || raw === "") {
+        const inp = document.getElementById("modal-input");
+        inp.classList.add("error");
+        setTimeout(() => inp.classList.remove("error"), 400);
+        return; // keep modal open
+      }
+      hideModal(); _modalResolve = null; resolve(n);
+    };
+  });
+}
+
+function askArray(prompt) {
+  return new Promise(resolve => {
+    showModal(
+      prompt || "Enter array values:",
+      "Integers separated by spaces or commas  (e.g.  3  7  1  9  4)"
+    );
+    _modalResolve = (action) => {
+      if (action === "cancel") { hideModal(); _modalResolve = null; resolve(null); return; }
+      const raw = document.getElementById("modal-input").value.replace(/,/g, " ").trim();
+      const nums = raw.split(/\s+/).map(Number).filter(n => !isNaN(n) && n !== undefined);
+      if (!nums.length || nums.some(isNaN)) {
+        const inp = document.getElementById("modal-input");
+        inp.classList.add("error");
+        setTimeout(() => inp.classList.remove("error"), 400);
+        return;
+      }
+      hideModal(); _modalResolve = null; resolve(nums);
+    };
+  });
+}
+
+// Keyboard support for modal
+document.getElementById("modal-input").addEventListener("keydown", e => {
+  if (e.key === "Enter")  { e.preventDefault(); modalOk(); }
+  if (e.key === "Escape") { e.preventDefault(); modalCancel(); }
+});
+document.getElementById("modal-overlay").addEventListener("click", e => {
+  if (e.target === document.getElementById("modal-overlay")) modalCancel();
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+buildMemGrid();
+addLine("op",    "  MARIE CPU Simulator — Ready");
+addLine("muted", "  AC = MAR = MBR = 0  ·  Memory zeroed");
+addSep();
+</script>
+</body>
+</html>
